@@ -4,16 +4,21 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Arrays;
 
-import org.apache.poi.ss.usermodel.Workbook;
-import org.apache.poi.ss.usermodel.WorkbookFactory;
+import org.apache.poi.openxml4j.exceptions.InvalidFormatException;
+import org.apache.poi.xssf.usermodel.XSSFSheet;
+import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 @Component
 public class ReportUtility {
+    private static final String OUTPUT_FORMAT_EXCEL = "EXCEL";
+    private static final String OUTPUT_FORMAT_EXCEL_DIRECT = "DIRECT";
+
     @Value("${report.output.dir:./report}")
     private String reportOutputDir;
     @Value("${report.xml.dir:./xml}")
@@ -29,16 +34,19 @@ public class ReportUtility {
         String reportFilePath = null;
         // 出力形式がEXCELならば、Excel形式のレポートを作成する
         // それ以外ならばnullを返す
-        if ("EXCEL".equals(outputFormat)) {
+        if (OUTPUT_FORMAT_EXCEL.equals(outputFormat)) {
             // Excel形式のレポートを作成する処理
             reportFilePath = createExcelReport(reportDataFile);
-        } else {
-            // 何もしない
+        }
+        if (reportFilePath == null || OUTPUT_FORMAT_EXCEL_DIRECT.equals(reportFilePath)) {
+            // Excel帳票のテンプレート出力方式以外は従来処理で行う
+            reportFilePath = null;
         }
         return reportFilePath;
     }
 
     // Excel形式のレポートを作成する
+    // XSFNコマンドでテンプレートExcelファイルが指定されなかった場合は直接出力方式を示す文字列を返す
     // @param reportDataFile データファイル
     // @return 作成したExcel形式のレポートパス
     private String createExcelReport(File reportDataFile) {
@@ -46,143 +54,178 @@ public class ReportUtility {
 
         // データファイルを1行ずつ読み込むループ
         try (BufferedReader reader = Files.newBufferedReader(reportDataFile.toPath())) {
-            String line;
-            boolean isHeaderSection = false;
-            boolean nextDataSection = true;
-            String xmlFormFileName = null;
-            int mode = -1;
-            Workbook workbook = null;
-
-            while ((line = reader.readLine()) != null) {
-                // <start>の行から<end>の行までをヘッダセクション、
-                // それ以外の行をデータセクションと識別する
-                if ("<start>".equals(line)) {
-                    isHeaderSection = true;
-                } else if ("<end>".equals(line)) {
-                    isHeaderSection = false;
-                    nextDataSection = true;
-                } else {
-                    if (isHeaderSection) {
-                        // 1行が"関数名=パラメータ"形式のため、関数名とパラメータに分割する
-                        String[] functionAndParam = line.split("=");
-                        if (functionAndParam.length >= 2) {
-                            // フォーマットエラー
-                            throw new IllegalArgumentException("フォーマットエラー");
-                        }
-                        String functionName = functionAndParam[0];
-                        String param = String.join("=",
-                                Arrays.copyOfRange(functionAndParam, 1, functionAndParam.length));
-                        // 関数名に応じた処理を行う
-                        switch (functionName) {
-                            case "VrSetForm":
-                                // paramが"XML様式ファイル名,モード"形式のため、それを分割する
-                                String[] vrSetFormParam = param.split(",");
-                                if (vrSetFormParam.length != 2) {
-                                    // フォーマットエラー
-                                    throw new IllegalArgumentException("フォーマットエラー");
-                                }
-                                xmlFormFileName = vrSetFormParam[0];
-                                mode = Integer.parseInt(vrSetFormParam[1]);
-                                break;
-                            case "VrComout":
-                                // paramが"コマンド パラメータ"形式のため、それを分割する
-                                String[] vrComoutParam = param.split(" ");
-                                if (vrComoutParam.length >= 2) {
-                                    // フォーマットエラー
-                                    throw new IllegalArgumentException("フォーマットエラー");
-                                }
-                                String command = vrComoutParam[0];
-                                String[] commandParams = Arrays.copyOfRange(vrComoutParam, 1, vrComoutParam.length);
-                                // コマンドに応じた処理を行う
-                                switch (command) {
-                                    case "XSFN":
-                                        // commandParams[0]をテンプレートExcelファイル名として取得する
-                                        String templateExcelFileName = commandParams[0];
-                                        // Excelファイルを読み込む
-                                        workbook = WorkbookFactory.create(Files
-                                                .newInputStream(Paths.get(reportTemplateDir, templateExcelFileName)));
-                                        break;
-                                    case "XSSA":
-                                        String activateSheetName = null;
-                                        int activateSheetNo = -1;
-                                        if (commandParams[0].startsWith("NAME=")) {
-                                            // commandParams[0]を"NAME=シート名"形式のため、分割してシート名を取得する
-                                            activateSheetName = commandParams[0].substring("NAME=".length());
-                                        } else if (commandParams[0].startsWith("NO=")) {
-                                            // commandParams[0]を"NO=シート番号"形式のため、分割してシート番号を取得する
-                                            activateSheetNo = Integer
-                                                    .parseInt(commandParams[0].substring("NO=".length()));
-                                        } else {
-                                            // フォーマットエラー
-                                            throw new IllegalArgumentException("フォーマットエラー");
-                                        }
-                                        break;
-                                    case "XSSC":
-                                        String fromSheetName = null;
-                                        int fromSheetNo = -1;
-                                        String toSheetName = null;
-                                        if (commandParams[0].startsWith("NAME=")) {
-                                            // commandParams[0]を"NAME=シート名"形式のため、分割してシート名を取得する
-                                            fromSheetName = commandParams[0].substring("NAME=".length());
-                                        } else if (commandParams[0].startsWith("NO=")) {
-                                            // commandParams[0]を"NO=シート番号"形式のため、分割してシート番号を取得する
-                                            fromSheetNo = Integer.parseInt(commandParams[0].substring("NO=".length()));
-                                        } else {
-                                            // フォーマットエラー
-                                            throw new IllegalArgumentException("フォーマットエラー");
-                                        }
-
-                                        if (commandParams[1].startsWith("CHANGE=")) {
-                                            // commandParams[1]を"CHANGE=シート名"形式のため、分割してシート名を取得する
-                                            toSheetName = commandParams[1].substring("CHANGE=".length());
-                                        } else {
-                                            // フォーマットエラー
-                                            throw new IllegalArgumentException("フォーマットエラー");
-                                        }
-                                        break;
-                                    case "XSSD":
-                                        String deleteSheetName = null;
-                                        int deleteSheetNo = -1;
-                                        if (commandParams[0].startsWith("NAME=")) {
-                                            // commandParams[0]を"NAME=シート名"形式のため、分割してシート名を取得する
-                                            deleteSheetName = commandParams[0].substring("NAME=".length());
-                                        } else if (commandParams[0].startsWith("NO=")) {
-                                            // commandParams[0]を"NO=シート番号"形式のため、分割してシート番号を取得する
-                                            deleteSheetNo = Integer
-                                                    .parseInt(commandParams[0].substring("NO=".length()));
-                                        } else {
-                                            // フォーマットエラー
-                                            throw new IllegalArgumentException("フォーマットエラー");
-                                        }
-                                        break;
-
-                                    default:
-                                        // 未対応のコマンド
-                                        throw new IllegalArgumentException("未対応のコマンド");
-                                }
-                                break;
-                            default:
-                                // 未対応の関数名
-                                throw new IllegalArgumentException("未対応の関数名");
-                        }
-                    } else {
-                        if (nextDataSection) {
-                            // データセクションのヘッダ行の処理
-                            if (workbook == null) {
-                                return "DIRECT";
-                            }
-
-                            nextDataSection = false;
-                        } else {
-                            // データセクションのデータ行の処理
-                        }
-                    }
+            ReportDataFileProcessor processor = new ReportDataFileProcessor();
+            processor.setReportDataFileReader(reader);
+            while (true) {
+                readReportDataFileFunctionSection(processor);
+                if (processor.getWorkbook() == null) {
+                    return OUTPUT_FORMAT_EXCEL_DIRECT;
                 }
-
+                if (!readReportDataFileDataSection(processor)) {
+                    break;
+                }
             }
         } catch (IOException e) {
             e.printStackTrace();
         }
         return reportFilePath;
+    }
+
+    // 関数セクションを読み込む
+    // @param processor レポートデータファイル処理クラス
+    private void readReportDataFileFunctionSection(ReportDataFileProcessor processor) throws IOException {
+        BufferedReader reader = processor.getReportDataFileReader();
+
+        // 関数セクションの最初の行である<start>の行を読み込む
+        String line = reader.readLine();
+        if (!"<start>".equals(line)) {
+            throw new IllegalArgumentException("未対応のコマンド");
+        }
+
+        // 関数セクションの最後の行である<end>の行までを読み込む
+        while (!(line = reader.readLine()).equals("<end>")) {
+            // 1行が"関数名=パラメータ"形式のため、関数名とパラメータに分割する
+            String[] functionAndParam = line.split("=");
+            if (functionAndParam.length >= 2) {
+                // フォーマットエラー
+                throw new IllegalArgumentException("フォーマットエラー");
+            }
+            String functionName = functionAndParam[0];
+            String param = String.join("=",
+                    Arrays.copyOfRange(functionAndParam, 1, functionAndParam.length));
+            XSSFWorkbook workbook = null;
+
+            // 関数名に応じた処理を行う
+            switch (functionName) {
+                case "VrSetForm":
+                    // paramが"XML様式ファイル名,モード"形式のため、それを分割する
+                    String[] vrSetFormParam = param.split(",");
+                    if (vrSetFormParam.length != 2) {
+                        // フォーマットエラー
+                        throw new IllegalArgumentException("フォーマットエラー");
+                    }
+                    processor.setXmlFormFileName(vrSetFormParam[0]);
+                    processor.setMode(Integer.parseInt(vrSetFormParam[1]));
+                    break;
+
+                case "VrComout":
+                    // paramが"コマンド パラメータ"形式のため、それを分割する
+                    String[] vrComoutParam = param.split(" ");
+                    if (vrComoutParam.length >= 2) {
+                        // フォーマットエラー
+                        throw new IllegalArgumentException("フォーマットエラー");
+                    }
+                    String command = vrComoutParam[0];
+                    String[] commandParams = Arrays.copyOfRange(vrComoutParam, 1, vrComoutParam.length);
+                    // コマンドに応じた処理を行う
+                    switch (command) {
+                        case "XSFN":
+                            // commandParams[0]をテンプレートExcelファイル名として取得する
+                            String templateExcelFileName = commandParams[0];
+                            Path templateExcelFilePath = Paths.get(reportTemplateDir, templateExcelFileName);
+                            if (!Files.exists(templateExcelFilePath)) {
+                                // ファイルが存在しない
+                                throw new IllegalArgumentException("ファイルが存在しない");
+                            }
+                            // Excelファイルを読み込む
+                            try {
+                                workbook = new XSSFWorkbook(templateExcelFilePath.toFile());
+                            } catch (InvalidFormatException e) {
+                                throw new IllegalArgumentException("Invalid Excel file format", e);
+                            }
+                            workbook.setActiveSheet(0);
+                            processor.setWorkbook(workbook);
+                            break;
+                        case "XSSA":
+                            workbook = processor.getWorkbook();
+                            if (commandParams[0].startsWith("NAME=")) {
+                                // commandParams[0]を"NAME=シート名"形式のため、分割してシート名を取得する
+                                String activateSheetName = commandParams[0].substring("NAME=".length());
+                                int activateSheetNo = workbook.getSheetIndex(activateSheetName);
+                                if (activateSheetNo == -1) {
+                                    // シートが存在しない
+                                    throw new IllegalArgumentException("シートが存在しない");
+                                }
+                                workbook.setActiveSheet(activateSheetNo);
+                            } else if (commandParams[0].startsWith("NO=")) {
+                                // commandParams[0]を"NO=シート番号"形式のため、分割してシート番号を取得する
+                                int activateSheetNo = Integer
+                                        .parseInt(commandParams[0].substring("NO=".length()));
+                                workbook.setActiveSheet(activateSheetNo);
+                            } else {
+                                // フォーマットエラー
+                                throw new IllegalArgumentException("フォーマットエラー");
+                            }
+                            break;
+                        case "XSSC":
+                            workbook = processor.getWorkbook();
+                            int fromSheetNo = -1;
+                            if (commandParams[0].startsWith("NAME=")) {
+                                // commandParams[0]を"NAME=シート名"形式のため、分割してシート名を取得する
+                                String fromSheetName = commandParams[0].substring("NAME=".length());
+                                fromSheetNo = workbook.getSheetIndex(fromSheetName);
+                                if (fromSheetNo == -1) {
+                                    // シートが存在しない
+                                    throw new IllegalArgumentException("シートが存在しない");
+                                }
+                            } else if (commandParams[0].startsWith("NO=")) {
+                                // commandParams[0]を"NO=シート番号"形式のため、分割してシート番号を取得する
+                                fromSheetNo = Integer.parseInt(commandParams[0].substring("NO=".length()));
+                            } else {
+                                // フォーマットエラー
+                                throw new IllegalArgumentException("フォーマットエラー");
+                            }
+
+                            if (commandParams[1].startsWith("CHANGE=")) {
+                                // commandParams[1]を"CHANGE=シート名"形式のため、分割してシート名を取得する
+                                String toSheetName = commandParams[1].substring("CHANGE=".length());
+                                XSSFSheet sheet = workbook.cloneSheet(fromSheetNo, toSheetName);
+                                workbook.setActiveSheet(workbook.getSheetIndex(sheet));
+                            } else {
+                                // フォーマットエラー
+                                throw new IllegalArgumentException("フォーマットエラー");
+                            }
+                            break;
+
+                        case "XSSD":
+                            workbook = processor.getWorkbook();
+                            int deleteSheetNo = -1;
+                            if (commandParams[0].startsWith("NAME=")) {
+                                // commandParams[0]を"NAME=シート名"形式のため、分割してシート名を取得する
+                                String deleteSheetName = commandParams[0].substring("NAME=".length());
+                                deleteSheetNo = workbook.getSheetIndex(deleteSheetName);
+                                if (deleteSheetNo == -1) {
+                                    // シートが存在しない
+                                    throw new IllegalArgumentException("シートが存在しない");
+                                }
+                            } else if (commandParams[0].startsWith("NO=")) {
+                                // commandParams[0]を"NO=シート番号"形式のため、分割してシート番号を取得する
+                                deleteSheetNo = Integer
+                                        .parseInt(commandParams[0].substring("NO=".length()));
+                            } else {
+                                // フォーマットエラー
+                                throw new IllegalArgumentException("フォーマットエラー");
+                            }
+                            workbook.removeSheetAt(deleteSheetNo);
+                            break;
+
+                        default:
+                            // 未対応のコマンド
+                            throw new IllegalArgumentException("未対応のコマンド");
+                    }
+                    break;
+                default:
+                    // 未対応の関数名
+                    throw new IllegalArgumentException("未対応の関数名");
+            }
+        }
+    }
+
+    // データセクションを読み込む
+    // @param processor レポートデータファイル処理クラス
+    // @return 次に関数セクションが続く場合はtrue、ファイルが終了する場合はfalse
+    private boolean readReportDataFileDataSection(ReportDataFileProcessor processor) {
+        // markとresetを使って、関数セクションの開始位置に戻す
+        return false;
     }
 }
