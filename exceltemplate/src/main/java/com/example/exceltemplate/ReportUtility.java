@@ -14,6 +14,9 @@ import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
+import com.opencsv.CSVReader;
+import com.opencsv.exceptions.CsvValidationException;
+
 @Component
 public class ReportUtility {
     private static final String OUTPUT_FORMAT_EXCEL = "EXCEL";
@@ -224,7 +227,15 @@ public class ReportUtility {
     // データセクションを読み込む
     // @param processor レポートデータファイル処理クラス
     // @return 次に関数セクションが続く場合はtrue、ファイルが終了する場合はfalse
-    private boolean readReportDataFileDataSection(ReportDataFileProcessor processor) {
+    private boolean readReportDataFileDataSection(ReportDataFileProcessor processor) throws IOException, CsvValidationException {
+        BufferedReader reader = processor.getReportDataFileReader();
+        CSVReader csvReader = new CSVReader(reader);
+        XSSFWorkbook workbook = processor.getWorkbook();
+
+        // データセクションの最初の行であるCSVヘッダ行を読み込む
+        String[] header = csvReader.readNext();
+        // OpenCSVを使ってCSVヘッダ行をパースする
+
         // markとresetを使って、関数セクションの開始位置に戻す
         return false;
     }
