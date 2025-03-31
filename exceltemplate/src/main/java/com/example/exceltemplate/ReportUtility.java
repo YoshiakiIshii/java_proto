@@ -7,13 +7,23 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Arrays;
+import java.util.HashMap;
+
+import javax.xml.parsers.DocumentBuilder;
+import javax.xml.parsers.DocumentBuilderFactory;
+import javax.xml.parsers.ParserConfigurationException;
 
 import org.apache.poi.openxml4j.exceptions.InvalidFormatException;
 import org.apache.poi.xssf.usermodel.XSSFSheet;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
+import org.w3c.dom.Document;
+import org.w3c.dom.Element;
+import org.w3c.dom.NodeList;
+import org.xml.sax.SAXException;
 
+import com.opencsv.CSVParser;
 import com.opencsv.CSVReader;
 import com.opencsv.exceptions.CsvValidationException;
 
@@ -55,7 +65,7 @@ public class ReportUtility {
     private String createExcelReport(File reportDataFile) {
         String reportFilePath = null;
 
-        // データファイルを1行ずつ読み込むループ
+        // データファイルを関数部→データ部→…と読み込むループ
         try (BufferedReader reader = Files.newBufferedReader(reportDataFile.toPath())) {
             ReportDataFileProcessor processor = new ReportDataFileProcessor();
             processor.setReportDataFileReader(reader);
@@ -229,14 +239,71 @@ public class ReportUtility {
     // @return 次に関数セクションが続く場合はtrue、ファイルが終了する場合はfalse
     private boolean readReportDataFileDataSection(ReportDataFileProcessor processor) throws IOException, CsvValidationException {
         BufferedReader reader = processor.getReportDataFileReader();
-        CSVReader csvReader = new CSVReader(reader);
+        CSVParser csvParser = new CSVParser();
         XSSFWorkbook workbook = processor.getWorkbook();
+        HashMap<String, ReportFormatField> reportFormatFieldMap = getReportFormatFieldMap(processor);
 
-        // データセクションの最初の行であるCSVヘッダ行を読み込む
-        String[] header = csvReader.readNext();
-        // OpenCSVを使ってCSVヘッダ行をパースする
+        // データセクションの最初の行であるCSVヘッダ行を読み込みパースする
+        String[] header = csvParser.parseLine(reader.readLine());
+        if (header == null) {
+            // CSVヘッダ行が読み込めない場合は、ファイルの終端
+            return false;
+        }
 
         // markとresetを使って、関数セクションの開始位置に戻す
         return false;
+    }
+
+    /**
+     * 指定されたプロセッサに関連付けられたレポートフォーマットフィールドのマップを取得します。
+     * マップがまだ初期化されていない場合、XMLファイルを解析してマップを構築します。
+     *
+     * @param processor {@link ReportDataFileProcessor} のインスタンスで、XMLファイル名と
+     *                  現在のレポートフォーマットフィールドマップを含みます。
+     * @return フィールド名をキーとし、{@link ReportFormatField} オブジェクトを値とする
+     *         {@link HashMap} を返します。
+     * @throws IllegalArgumentException XMLファイルが存在しない場合、またはXMLの解析や
+     *                                  設定中にエラーが発生した場合にスローされます。
+     */
+    private HashMap<String, ReportFormatField> getReportFormatFieldMap(ReportDataFileProcessor processor) {
+        HashMap<String, ReportFormatField> reportFormatFieldMap = processor.getReportFormatFieldMap();
+        if (reportFormatFieldMap == null) {
+            reportFormatFieldMap = new HashMap<>();
+            DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+            // XMLファイルを読み込む
+            Path xmlFilePath = Paths.get(reportXmlDir, processor.getXmlFormFileName());
+            if (!Files.exists(xmlFilePath)) {
+                // ファイルが存在しない
+                throw new IllegalArgumentException("ファイルが存在しない");
+            }
+            // XMLファイルをパースして、reportFormatFieldMapに格納する
+            DocumentBuilder builder;
+            try {
+                builder = factory.newDocumentBuilder();
+            } catch (ParserConfigurationException e) {
+                throw new IllegalArgumentException("Error configuring XML parser", e);
+            }
+            Document document;
+            try {
+                document = builder.parse(xmlFilePath.toFile());
+            } catch (SAXException | IOException e) {
+                throw new IllegalArgumentException("Error parsing XML file", e);
+            }
+            Element root = document.getDocumentElement();
+            NodeList fieldList = root.getElementsByTagName("Field");
+            for (int i = 0; i < fieldList.getLength(); i++) {
+                Element fieldElement = (Element) fieldList.item(i);
+                String fieldName = fieldElement.getAttribute("name");
+                String fieldLocation = fieldElement.getAttribute("strComment");
+                String fieldEditFormula = fieldElement.getAttribute("strEditFormula");
+                ReportFormatField reportFormatField = new ReportFormatField();
+                reportFormatField.setFieldName(fieldName);
+                reportFormatField.setLocation(fieldLocation);
+                reportFormatField.setFormulaString(fieldEditFormula);
+                reportFormatFieldMap.put(fieldName, reportFormatField);
+            }
+            processor.setReportFormatFieldMap(reportFormatFieldMap);
+        }
+        return reportFormatFieldMap;
     }
 }
