@@ -14,6 +14,9 @@ import javax.xml.parsers.DocumentBuilderFactory;
 import javax.xml.parsers.ParserConfigurationException;
 
 import org.apache.poi.openxml4j.exceptions.InvalidFormatException;
+import org.apache.poi.ss.usermodel.Cell;
+import org.apache.poi.ss.usermodel.Row;
+import org.apache.poi.ss.util.CellReference;
 import org.apache.poi.xssf.usermodel.XSSFSheet;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.springframework.beans.factory.annotation.Value;
@@ -24,7 +27,6 @@ import org.w3c.dom.NodeList;
 import org.xml.sax.SAXException;
 
 import com.opencsv.CSVParser;
-import com.opencsv.CSVReader;
 import com.opencsv.exceptions.CsvValidationException;
 
 @Component
@@ -38,6 +40,12 @@ public class ReportUtility {
     private String reportXmlDir;
     @Value("${report.template.dir:./template}")
     private String reportTemplateDir;
+
+    public void printDirs() {
+        System.out.println("reportOutputDir: " + Paths.get(reportOutputDir, "sample.txt").toAbsolutePath());
+        System.out.println("reportXmlDir: " + Paths.get(reportXmlDir, "sample.xml").toAbsolutePath());
+        System.out.println("reportTemplateDir: " + Paths.get(reportTemplateDir, "sample.xlsx").toAbsolutePath());
+    }
 
     // 引数で指定されたデータファイル、出力形式に従い、レポートを作成する
     // @param reportDataFile データファイル
@@ -80,12 +88,40 @@ public class ReportUtility {
             }
         } catch (IOException e) {
             e.printStackTrace();
+        } catch (CsvValidationException e) {
+            e.printStackTrace();
         }
         return reportFilePath;
     }
 
-    // 関数セクションを読み込む
-    // @param processor レポートデータファイル処理クラス
+    /**
+     * レポートデータファイルの関数セクションを読み込み、処理を行うメソッドです。
+     * 
+     * <p>このメソッドは、以下の形式で記述された関数セクションを解析し、対応する処理を実行します。</p>
+     * <ul>
+     *   <li>セクションの開始行: <code>&lt;start&gt;</code></li>
+     *   <li>セクションの終了行: <code>&lt;end&gt;</code></li>
+     *   <li>関数行の形式: <code>関数名=パラメータ</code></li>
+     * </ul>
+     * 
+     * <p>サポートされる関数名とその処理内容:</p>
+     * <ul>
+     *   <li><code>VrSetForm</code>: XML様式ファイル名とモードを設定します。</li>
+     *   <li><code>VrComout</code>: コマンドに応じてExcelテンプレートの操作を行います。</li>
+     * </ul>
+     * 
+     * <p>サポートされるコマンドとその処理内容:</p>
+     * <ul>
+     *   <li><code>XSFN</code>: テンプレートExcelファイルを読み込みます。</li>
+     *   <li><code>XSSA</code>: 指定されたシートをアクティブにします。</li>
+     *   <li><code>XSSC</code>: シートを複製し、新しい名前を設定します。</li>
+     *   <li><code>XSSD</code>: 指定されたシートを削除します。</li>
+     * </ul>
+     * 
+     * @param processor レポートデータファイルの処理を行う {@link ReportDataFileProcessor} オブジェクト
+     * @throws IOException ファイルの読み込み中にエラーが発生した場合
+     * @throws IllegalArgumentException 入力データの形式が不正、または未対応のコマンドや関数名が指定された場合
+     */
     private void readReportDataFileFunctionSection(ReportDataFileProcessor processor) throws IOException {
         BufferedReader reader = processor.getReportDataFileReader();
 
@@ -234,13 +270,27 @@ public class ReportUtility {
         }
     }
 
-    // データセクションを読み込む
-    // @param processor レポートデータファイル処理クラス
-    // @return 次に関数セクションが続く場合はtrue、ファイルが終了する場合はfalse
+    /**
+     * レポートデータファイルのデータセクションを読み込み、その内容を処理します。
+     * 
+     * <p>このメソッドは、データセクションのCSVヘッダ行を読み込み、その後の行を
+     * ファイルの終端または"<start>"行が見つかるまで解析します。"<start>"が見つかった場合、
+     * リーダーをマークした位置にリセットし、{@code true} を返します。それ以外の場合は、
+     * CSVデータ行を処理し、フィールド名をExcelシート内の対応する位置にマッピングして
+     * 値を設定します。</p>
+     * 
+     * @param processor {@link ReportDataFileProcessor} のインスタンスで、レポートデータ
+     *                  ファイルリーダー、ワークブック、およびその他の必要なリソースに
+     *                  アクセスを提供します。
+     * @return "<start>" 行が見つかった場合は {@code true}、それ以外の場合は {@code false}。
+     * @throws IOException ファイルの読み込み中にI/Oエラーが発生した場合。
+     * @throws CsvValidationException CSVデータの解析中にエラーが発生した場合。
+     */
     private boolean readReportDataFileDataSection(ReportDataFileProcessor processor) throws IOException, CsvValidationException {
         BufferedReader reader = processor.getReportDataFileReader();
         CSVParser csvParser = new CSVParser();
         XSSFWorkbook workbook = processor.getWorkbook();
+        XSSFSheet sheet = workbook.getSheetAt(workbook.getActiveSheetIndex());
         HashMap<String, ReportFormatField> reportFormatFieldMap = getReportFormatFieldMap(processor);
 
         // データセクションの最初の行であるCSVヘッダ行を読み込みパースする
@@ -250,16 +300,57 @@ public class ReportUtility {
             return false;
         }
 
-        // markとresetを使って、関数セクションの開始位置に戻す
-        return false;
+        // CSVデータ行を読み込み、ファイルが終了するか、<start>行が見つかるまでループする
+        // 行を読み込む前にmarkしておき、<start>行が見つかった場合はresetする
+        while (true) {
+            reader.mark(1024); // 1024バイトまでmarkする
+            String line = reader.readLine();
+            if (line == null) {
+                // ファイルの終端
+                return false;
+            }
+            // <start>行が見つかった場合は、markした位置に戻してtrueを返す
+            if ("<start>".equals(line)) {
+                reader.reset();
+                return true;
+            }
+
+            // CSVデータ行をパースする
+            String[] data = csvParser.parseLine(line);
+            if (data == null) {
+                // CSVデータ行が読み込めない場合はその行を読み飛ばす
+                continue;
+            }
+
+            // フィールド名と値をマップに格納する
+            for (int i = 0; i < header.length; i++) {
+                String fieldName = header[i];
+                String fieldValue = data[i];
+                ReportFormatField reportFormatField = reportFormatFieldMap.get(fieldName);
+                if (reportFormatField != null) {
+                    // フィールド名がマップに存在する場合、locationに指定された位置に値をセットする
+                    CellReference cellRef = new CellReference(reportFormatField.getLocation());
+                    Row row = sheet.getRow(cellRef.getRow());
+                    if (row == null) {
+                        row = sheet.createRow(cellRef.getRow());
+                    }
+                    Cell cell = row.getCell(cellRef.getCol());
+                    if (cell == null) {
+                        cell = row.createCell(cellRef.getCol());
+                    }
+                    cell.setCellValue(fieldValue);
+
+                }
+            }
+        }
     }
 
     /**
-     * 指定されたプロセッサに関連付けられたレポートフォーマットフィールドのマップを取得します。
-     * マップがまだ初期化されていない場合、XMLファイルを解析してマップを構築します。
+     * 指定されたプロセッサに関連付けられた様式定義フィールドのマップを取得します。
+     * マップがまだ初期化されていない場合、様式定義XMLファイルを解析してマップを構築します。
      *
-     * @param processor {@link ReportDataFileProcessor} のインスタンスで、XMLファイル名と
-     *                  現在のレポートフォーマットフィールドマップを含みます。
+     * @param processor {@link ReportDataFileProcessor} のインスタンスで、様式定義XMLファイル名と
+     *                  様式定義フィールドマップを含みます。
      * @return フィールド名をキーとし、{@link ReportFormatField} オブジェクトを値とする
      *         {@link HashMap} を返します。
      * @throws IllegalArgumentException XMLファイルが存在しない場合、またはXMLの解析や
