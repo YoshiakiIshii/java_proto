@@ -3,6 +3,8 @@ package com.example.exceltemplate;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 import java.io.File;
+import java.nio.file.Paths;
+
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mock;
@@ -51,5 +53,17 @@ class ReportUtilityTest {
     @Test
     void testOutputReport_printDirs() {
         reportUtility.printDirs();
+    }
+
+    @Test
+    void testOutputReport_outputReport01() {
+        // Arrange
+        File mockFile = Paths.get("./testdata/csv", "data1.csv").toFile();
+
+        // Act
+        String result = reportUtility.outputReport(mockFile, "EXCEL");
+
+        // Assert
+        assertNotNull(result);
     }
 }
