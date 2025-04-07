@@ -44,12 +44,6 @@ public class ReportUtility {
     @Value("${report.template.dir:./testdata/template}")
     private String reportTemplateDir;
 
-    public void printDirs() {
-        System.out.println("reportOutputDir: " + Paths.get(reportOutputDir, "sample.txt").toAbsolutePath());
-        System.out.println("reportXmlDir: " + Paths.get(reportXmlDir, "sample.xml").toAbsolutePath());
-        System.out.println("reportTemplateDir: " + Paths.get(reportTemplateDir, "sample.xlsx").toAbsolutePath());
-    }
-
     // 引数で指定されたデータファイル、出力形式に従い、レポートを作成する
     // @param reportDataFile データファイル
     // @param outputFormat 出力形式

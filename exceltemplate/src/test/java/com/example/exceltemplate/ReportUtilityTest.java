@@ -51,11 +51,6 @@ class ReportUtilityTest {
     }
 
     @Test
-    void testOutputReport_printDirs() {
-        reportUtility.printDirs();
-    }
-
-    @Test
     void testOutputReport_outputReport01() {
         // Arrange
         File mockFile = Paths.get("./testdata/csv", "data1.csv").toFile();
